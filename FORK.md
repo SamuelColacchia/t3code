@@ -20,6 +20,13 @@ This fork carries a small stack of patches so T3 Code can drive OMO (the `omo` p
 
 Upstream workflows are disabled with `gh workflow disable` and never edited. The only workflow that runs here is the fork's own `fork-release.yml`.
 
+## Keeping the schedule on
+
+GitHub disables scheduled workflows in a repository after 60 days without repository activity. The daily rebase only pushes when upstream releases a new stable, so a quiet stretch can switch the schedule off.
+
+- Check: `gh workflow list -R SamuelColacchia/t3code --all` (`OMO fork release` must be `active`; every upstream workflow stays `disabled_manually`).
+- Re-enable: `gh workflow enable fork-release.yml -R SamuelColacchia/t3code`. Never enable an upstream workflow.
+
 ## Rollback
 
 Run `scripts/t3-fork-rollback` in `~/.config/opencode` (added later). It stops the fork service and returns T3 to its stock local server. To also restore saved T3 data, pass `--restore ~/.t3/userdata.cutover.<stamp>`.
