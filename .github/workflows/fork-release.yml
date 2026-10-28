@@ -1,0 +1,453 @@
+name: OMO fork release
+
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Fork branch to update (omo publishes; other branches upload artifacts)"
+        type: string
+        default: omo
+      force_build:
+        description: "Build and publish even when the branch is already up to date"
+        type: boolean
+        default: false
+
+# All branches share rerere history, so serialize publication of that branch too.
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+  GIT_TERMINAL_PROMPT: "0"
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      branch: ${{ steps.branch.outputs.branch }}
+      new: ${{ steps.tags.outputs.new }}
+      old: ${{ steps.tags.outputs.old }}
+      version: ${{ steps.tags.outputs.version }}
+      original_sha: ${{ steps.tags.outputs.original_sha }}
+    steps:
+      - name: Validate branch input
+        id: branch
+        env:
+          BRANCH: ${{ inputs.branch || 'omo' }}
+        run: |
+          set -euo pipefail
+          if [[ "$BRANCH" == main || "$BRANCH" == rr-cache || "$BRANCH" == -* ]] ||
+            ! git check-ref-format "refs/heads/$BRANCH"; then
+            echo "Invalid or reserved branch: $BRANCH" >&2
+            exit 1
+          fi
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.branch.outputs.branch }}
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve upstream stable tags
+        id: tags
+        env:
+          BRANCH: ${{ steps.branch.outputs.branch }}
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/fork.log") 2>&1
+          git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch --no-tags upstream '+refs/tags/*:refs/remotes/upstream/tags/*'
+          NEW="$(gh release view -R pingdotgg/t3code --json tagName --jq .tagName)"
+          [[ "$NEW" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh release list -R pingdotgg/t3code --exclude-pre-releases --exclude-drafts \
+            --limit 1000 --json tagName --jq '.[].tagName' > "$RUNNER_TEMP/upstream-stables"
+          OLD=""
+          while IFS= read -r tag; do
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+            if git merge-base --is-ancestor "refs/remotes/upstream/tags/$tag" "$BRANCH"; then
+              OLD="$tag"
+              break
+            fi
+          done < "$RUNNER_TEMP/upstream-stables"
+          if [[ -z "$OLD" ]]; then
+            echo "No upstream stable release is an ancestor of $BRANCH." >&2
+            exit 1
+          fi
+          printf 'NEW=%s OLD=%s branch=%s\n' "$NEW" "$OLD" "$BRANCH"
+          {
+            echo "new=$NEW"
+            echo "old=$OLD"
+            echo "version=${NEW#v}"
+            echo "original_sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Report resolution failure
+        if: failure()
+        run: |
+          {
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo '```text'
+            if [[ -f "$RUNNER_TEMP/fork.log" ]]; then tail -c 50000 "$RUNNER_TEMP/fork.log"; fi
+            echo '```'
+          } > "$RUNNER_TEMP/issue.md"
+          gh issue create --title "Fork upstream resolution failed" --body-file "$RUNNER_TEMP/issue.md"
+
+  rebase:
+    needs: [resolve]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    env:
+      BRANCH: ${{ needs.resolve.outputs.branch }}
+      NEW: ${{ needs.resolve.outputs.new }}
+      OLD: ${{ needs.resolve.outputs.old }}
+      ORIGINAL_SHA: ${{ needs.resolve.outputs.original_sha }}
+    outputs:
+      sha: ${{ steps.rebase.outputs.sha }}
+      should_build: ${{ steps.rebase.outputs.should_build }}
+      cache_sha: ${{ steps.rebase.outputs.cache_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.original_sha }}
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Rebase with saved rerere resolutions
+        id: rebase
+        env:
+          FORCE_BUILD: ${{ inputs.force_build || false }}
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/fork.log") 2>&1
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config rerere.enabled true
+          git config rerere.autoupdate true
+          git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch --no-tags upstream '+refs/tags/*:refs/remotes/upstream/tags/*'
+          git checkout -B "$BRANCH" "$ORIGINAL_SHA"
+          cache_sha="$(git ls-remote origin refs/heads/rr-cache | cut -f1)"
+          if [[ -n "$cache_sha" ]]; then
+            git fetch --no-tags origin "$cache_sha"
+            mkdir -p "$RUNNER_TEMP/rr-state"
+            git archive FETCH_HEAD | tar -x -C "$RUNNER_TEMP/rr-state"
+            tar -xzf "$RUNNER_TEMP/rr-state/rr-cache.tar.gz" -C .git
+          fi
+          if [[ "$NEW" != "$OLD" ]]; then
+            GIT_EDITOR=true git rebase --onto "refs/remotes/upstream/tags/$NEW" \
+              "refs/remotes/upstream/tags/$OLD" "$BRANCH"
+          fi
+          sha="$(git rev-parse HEAD)"
+          should_build=false
+          if [[ "$sha" != "$ORIGINAL_SHA" || "$FORCE_BUILD" == true ]]; then
+            should_build=true
+          fi
+          printf 'Candidate=%s original=%s should_build=%s\n' "$sha" "$ORIGINAL_SHA" "$should_build"
+          {
+            echo "sha=$sha"
+            echo "should_build=$should_build"
+            echo "cache_sha=$cache_sha"
+          } >> "$GITHUB_OUTPUT"
+          mkdir -p .git/rr-cache "$RUNNER_TEMP/candidate"
+          git bundle create "$RUNNER_TEMP/candidate/candidate.bundle" "refs/heads/$BRANCH"
+          tar -czf "$RUNNER_TEMP/candidate/rr-cache.tar.gz" -C .git rr-cache
+
+      # Carry the unpushed commit between runners; no branch changes before tests and build.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fork-candidate
+          path: ${{ runner.temp }}/candidate/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report rebase failure
+        if: failure()
+        run: |
+          {
+            echo "Branch: $BRANCH"
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo '```text'
+            if [[ -f "$RUNNER_TEMP/fork.log" ]]; then tail -c 50000 "$RUNNER_TEMP/fork.log"; fi
+            echo '```'
+          } > "$RUNNER_TEMP/issue.md"
+          gh issue create --title "Rebase onto $NEW failed" --body-file "$RUNNER_TEMP/issue.md"
+
+  test:
+    needs: [resolve, rebase]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.original_sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: fork-candidate
+          path: ${{ runner.temp }}/candidate
+
+      - name: Checkout candidate
+        env:
+          BRANCH: ${{ needs.resolve.outputs.branch }}
+          CANDIDATE_SHA: ${{ needs.rebase.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch "$RUNNER_TEMP/candidate/candidate.bundle" "refs/heads/$BRANCH"
+          git checkout --detach "$CANDIDATE_SHA"
+
+      - name: Setup Vite+ and Node dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Setup Bun for provider process fixtures
+        uses: oven-sh/setup-bun@v2
+
+      - name: Test providers and typecheck
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/fork.log") 2>&1
+          vp run --filter @t3tools/provider-pi test
+          vp run --filter @t3tools/provider-core test
+          vp run typecheck
+
+      - name: Report test failure
+        if: failure()
+        run: |
+          {
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo '```text'
+            if [[ -f "$RUNNER_TEMP/fork.log" ]]; then tail -c 50000 "$RUNNER_TEMP/fork.log"; fi
+            echo '```'
+          } > "$RUNNER_TEMP/issue.md"
+          gh issue create --title "Fork provider tests or typecheck failed" --body-file "$RUNNER_TEMP/issue.md"
+
+  build:
+    needs: [resolve, rebase, test]
+    if: needs.rebase.outputs.should_build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: write
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      T3CODE_TELEMETRY_CHANNEL: dev
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.original_sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: fork-candidate
+          path: ${{ runner.temp }}/candidate
+
+      - name: Checkout candidate
+        env:
+          BRANCH: ${{ needs.resolve.outputs.branch }}
+          CANDIDATE_SHA: ${{ needs.rebase.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch "$RUNNER_TEMP/candidate/candidate.bundle" "refs/heads/$BRANCH"
+          git checkout --detach "$CANDIDATE_SHA"
+
+      - name: Setup Vite+ and Node
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install server build dependencies
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/scripts...
+
+      - name: Setup resource monitor Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build Linux x64 server archive
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/fork.log") 2>&1
+          node scripts/update-release-package-versions.ts "$VERSION"
+          vp run --filter t3 build
+          node scripts/apply-web-brand-assets.ts production apps/server/dist/client
+          node apps/server/scripts/cli.ts build-exe --verbose
+          cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml \
+            --target x86_64-unknown-linux-gnu
+          mkdir -p "$RUNNER_TEMP/cli-resource-monitor/linux-x64"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor \
+            "$RUNNER_TEMP/cli-resource-monitor/linux-x64/"
+          node scripts/build-cli-archive.ts --platform linux --arch x64 --version "$VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" --output-dir release-cli
+
+      - name: Assert archive shape
+        run: |
+          set -euo pipefail
+          archive="release-cli/t3-$VERSION-linux-x64.tar.gz"
+          stem="t3-$VERSION-linux-x64"
+          tar -tzf "$archive" > "$RUNNER_TEMP/archive-entries"
+          for entry in t3 client/ node_modules/ resource-monitor/; do
+            if ! grep -Fxq "$stem/$entry" "$RUNNER_TEMP/archive-entries"; then
+              echo "Missing archive entry: $stem/$entry" >&2
+              exit 1
+            fi
+          done
+          echo "Archive contains t3, client/, node_modules/, resource-monitor/."
+
+      - name: Smoke-test version and checksum
+        run: |
+          set -euo pipefail
+          node scripts/smoke-cli-archive.ts \
+            --archive "release-cli/t3-$VERSION-linux-x64.tar.gz" --expect-version "$VERSION"
+          cd release-cli
+          sha256sum "t3-$VERSION-linux-x64.tar.gz" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fork-linux-x64
+          path: release-cli/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report build failure
+        if: failure()
+        run: |
+          {
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo '```text'
+            if [[ -f "$RUNNER_TEMP/fork.log" ]]; then tail -c 50000 "$RUNNER_TEMP/fork.log"; fi
+            echo '```'
+          } > "$RUNNER_TEMP/issue.md"
+          gh issue create --title "Fork Linux x64 build failed" --body-file "$RUNNER_TEMP/issue.md"
+
+  publish:
+    needs: [resolve, rebase, test, build]
+    if: needs.rebase.outputs.should_build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+    env:
+      BRANCH: ${{ needs.resolve.outputs.branch }}
+      NEW: ${{ needs.resolve.outputs.new }}
+      VERSION: ${{ needs.resolve.outputs.version }}
+      ORIGINAL_SHA: ${{ needs.resolve.outputs.original_sha }}
+      CANDIDATE_SHA: ${{ needs.rebase.outputs.sha }}
+      CACHE_SHA: ${{ needs.rebase.outputs.cache_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve.outputs.original_sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: fork-candidate
+          path: ${{ runner.temp }}/candidate
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: fork-linux-x64
+          path: release-cli
+
+      - name: Push verified candidate and rerere history
+        run: |
+          set -euo pipefail
+          exec > >(tee "$RUNNER_TEMP/fork.log") 2>&1
+          git fetch "$RUNNER_TEMP/candidate/candidate.bundle" "refs/heads/$BRANCH"
+          git checkout --detach "$CANDIDATE_SHA"
+          (cd release-cli && sha256sum -c SHA256SUMS)
+          cache_dir="$RUNNER_TEMP/rr-publish"
+          git init "$cache_dir"
+          if [[ -n "$CACHE_SHA" ]]; then
+            git fetch --no-tags origin "$CACHE_SHA"
+            git push "$cache_dir" FETCH_HEAD:refs/heads/rr-cache
+            git -C "$cache_dir" checkout rr-cache
+          else
+            git -C "$cache_dir" checkout --orphan rr-cache
+          fi
+          cp "$RUNNER_TEMP/candidate/rr-cache.tar.gz" "$cache_dir/rr-cache.tar.gz"
+          git -C "$cache_dir" add -A
+          git -C "$cache_dir" -c user.name="github-actions[bot]" \
+            -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --allow-empty -m "fork(ci): save rerere history for run $GITHUB_RUN_NUMBER"
+          git fetch "$cache_dir" refs/heads/rr-cache
+          cache_commit="$(git rev-parse FETCH_HEAD)"
+          git push --atomic \
+            --force-with-lease="refs/heads/$BRANCH:$ORIGINAL_SHA" \
+            --force-with-lease="refs/heads/rr-cache:$CACHE_SHA" \
+            origin "$CANDIDATE_SHA:refs/heads/$BRANCH" "$cache_commit:refs/heads/rr-cache"
+
+      - name: Publish omo release
+        id: release
+        if: needs.resolve.outputs.branch == 'omo'
+        run: |
+          set -euo pipefail
+          gh release create "$NEW-omo.$GITHUB_RUN_NUMBER" \
+            --target omo --prerelease=false --latest \
+            --title "T3 Code $NEW (OMO fork)" \
+            --notes "Upstream base: $NEW. Verified commit: $CANDIDATE_SHA." \
+            "release-cli/t3-$VERSION-linux-x64.tar.gz" release-cli/SHA256SUMS
+
+      - name: Upload non-omo result only
+        id: artifact
+        if: needs.resolve.outputs.branch != 'omo'
+        uses: actions/upload-artifact@v7
+        with:
+          name: fork-test-linux-x64-${{ github.run_number }}
+          path: release-cli/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report publication failure
+        if: failure()
+        run: |
+          {
+            echo "Branch: $BRANCH"
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo '```text'
+            if [[ -f "$RUNNER_TEMP/fork.log" ]]; then tail -c 50000 "$RUNNER_TEMP/fork.log"; fi
+            echo '```'
+          } > "$RUNNER_TEMP/issue.md"
+          gh issue create --title "Fork publication failed" --body-file "$RUNNER_TEMP/issue.md"
