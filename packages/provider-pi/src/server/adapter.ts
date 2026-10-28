@@ -71,6 +71,7 @@ import {
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
 import { PI_FILE_CHANGE_TOOLS } from "./mcpExtensionSource.ts";
+import { asPiModelSelectionError } from "./modelSelectionError.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -2558,7 +2559,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
-                    cause,
+                    cause: asPiModelSelectionError(cause),
                   }),
               ),
             ),

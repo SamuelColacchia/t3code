@@ -82,6 +82,44 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   );
 });
 
+it("shows Pi's reason when Pi rejects a turn's model selection, and only then", () => {
+  const turnStartError = (cause: unknown) =>
+    new ProviderAdapter.ProviderAdapterTurnStartError({
+      driver: ProviderDriverKind.make("pi"),
+      threadId: ThreadId.make("thread:pi-model-selection"),
+      providerThreadId: ProviderThreadId.make("provider-thread:pi-model-selection"),
+      runId: RunId.make("run:pi-model-selection"),
+      cause,
+    });
+  const rejected =
+    'Pi rejected the model selection for this turn: Model "anthropic/claude-haiku-5-5" cannot switch: target context window 100000 tokens is 138323 tokens short.';
+  assert.equal(
+    makeProviderFailure({
+      cause: Cause.fail(turnStartError({ _tag: "PiModelSelectionError", message: rejected })),
+    }).message,
+    rejected,
+  );
+
+  const generic =
+    "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
+  for (const cause of [
+    {
+      _tag: "PiRpcError",
+      operation: "set_model",
+      detail: "private model config",
+      message: "Pi RPC set_model failed: private model config.",
+    },
+    {
+      _tag: "PiRpcTimeoutError",
+      operation: "set_model",
+      message: "Pi RPC set_model failed: timed out after 30000ms.",
+    },
+    { _tag: "PiRpcError", operation: "read", message: "Pi RPC read failed: pi process exited." },
+  ]) {
+    assert.equal(makeProviderFailure({ cause: turnStartError(cause) }).message, generic);
+  }
+});
+
 it("keeps unrecognized reasons and provider text out of category messages", () => {
   for (const cause of [
     "Private launch command",

@@ -41,6 +41,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { toolOutputImages, compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
@@ -163,7 +164,9 @@ interface FakePi {
   readonly deferNextState: () => void;
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
   readonly failNextState: () => void;
-  readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "fork") => void;
+  readonly deferNextLifecycle: (
+    type: "switch_session" | "new_session" | "fork" | "set_thinking_level",
+  ) => void;
   readonly deferNextModelSelection: () => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
@@ -1764,6 +1767,74 @@ describe("PiAdapterV2", () => {
       assert.isTrue(
         updated.type === "provider_thread.updated" && updated.providerThread.id === placeholder.id,
       );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      operation: "set_model",
+      selection: modelSelection("anthropic/claude-haiku-5-5"),
+      // Captured verbatim from `omo --mode rpc` (omo 5.1.48) on 2026-10-28.
+      error:
+        'Model "anthropic/claude-haiku-5-5" cannot switch: target context window 100000 tokens is 138323 tokens short of the 238323-token requirement (live context 150367, system prompt 10752, active tool schemas 12436, output reserve 32000, compaction reserve 16384, speculation lead 0, safety margin 16384 [anthropic]). Compact the session, then revalidate and retry the model switch.',
+    },
+    {
+      operation: "set_thinking_level",
+      selection: {
+        instanceId: PI_INSTANCE_ID,
+        model: "default",
+        options: [{ id: "thinking", value: "high" }],
+      },
+      error: 'Thinking level "high" is not available for this model.',
+    },
+  ] as const)("shows Pi's reason when Pi rejects $operation at turn start", (rejection) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      if (rejection.operation === "set_model") fake.deferNextModelSelection();
+      else fake.deferNextLifecycle("set_thinking_level");
+      const starting = yield* startTurn(
+        runtime,
+        providerThread,
+        "default",
+        [],
+        "Hello pi",
+        rejection.selection,
+      ).pipe(Effect.flip, Effect.forkScoped);
+      const selectionRequest = yield* fake.takeRequest(rejection.operation);
+      yield* fake.emit({
+        type: "response",
+        id: selectionRequest["id"],
+        command: rejection.operation,
+        success: false,
+        error: rejection.error,
+      });
+      const error = yield* Fiber.join(starting);
+
+      assert.equal(error._tag, "ProviderAdapterTurnStartError");
+      assert.equal((error.cause as { readonly _tag?: unknown })._tag, "PiModelSelectionError");
+      // What the run records for the client when startTurn fails.
+      const failure = makeProviderFailure({ cause: Cause.squash(Cause.fail(error)) });
+      assert.equal(
+        failure.message,
+        `Pi rejected the model selection for this turn: ${rejection.error}`,
+      );
+      assert.notInclude(
+        fake.allRequests().map((record) => record["type"]),
+        "prompt",
+        "a rejected selection does not send the prompt",
+      );
+
+      // The rejection leaves nothing applied, so the next turn asks Pi again.
+      yield* startTurn(runtime, providerThread, "default", [], "Try again", rejection.selection, 2);
+      yield* fake.takeRequest(rejection.operation);
+      const prompt = yield* fake.takeRequest("prompt");
+      assert.equal(prompt["message"], "Try again");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
