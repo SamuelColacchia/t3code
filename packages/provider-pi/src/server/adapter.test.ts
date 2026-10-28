@@ -4298,3 +4298,421 @@ describe("PiRpc early process exit", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
+
+describe("PiAdapterV2 native questions", () => {
+  // Captured from `SENPI_RPC_CLIENT_CAPABILITIES=question omo --mode rpc` (omo-inbox ask_user_question).
+  const CAPTURED_QUESTION_FRAME = {
+    type: "extension_ui_request",
+    method: "question",
+    id: "1420654a-9e36-4b49-9bf7-f5c7b7bdd25a",
+    requestId: "toolu_012eW5Su3Gk85gF4AhgMYkCj",
+    toolCallId: "toolu_012eW5Su3Gk85gF4AhgMYkCj",
+    waitForAnswer: true,
+    questions: [
+      {
+        id: "q1",
+        header: "Color",
+        question: "Which color for the capture probe?",
+        multiSelect: false,
+        options: [
+          {
+            label: "Red",
+            description: "Warm color",
+          },
+          {
+            label: "Blue",
+            description: "Cool color",
+          },
+        ],
+      },
+      {
+        id: "q2",
+        header: "Toppings",
+        question: "Which toppings for the capture probe?",
+        multiSelect: true,
+        options: [
+          {
+            label: "Cheese",
+            description: "Dairy",
+          },
+          {
+            label: "Ham",
+            description: "Meat",
+          },
+          {
+            label: "Olives",
+            description: "Fruit",
+          },
+        ],
+      },
+    ],
+    timeout: 1800000,
+    askedAtMs: 1793176425842,
+    deadlineAtMs: 1793178225842,
+    remainingMs: 1800000,
+  };
+
+  const takeQuestionCard = (
+    takeEvent: (
+      predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
+    ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2Event>,
+    nativeRequestId: string,
+  ) =>
+    Effect.gen(function* () {
+      const event = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "user_input_request" &&
+          event.turnItem.nativeItemRef?.nativeId === nativeRequestId,
+      );
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+        return assert.fail("expected a user input request");
+      }
+      return event.turnItem;
+    });
+
+  const questionFrame = (id: string, waitForAnswer: boolean, overrides: PiRpcRecord = {}) => ({
+    ...CAPTURED_QUESTION_FRAME,
+    id,
+    waitForAnswer,
+    ...overrides,
+  });
+
+  const openQuestionTurn = Effect.fnUntraced(function* () {
+    const fake = yield* makeFakePi;
+    const { runtime, takeEvent } = yield* openRuntime(fake);
+    const providerThread = yield* runtime.ensureThread({
+      threadId: THREAD_ID,
+      modelSelection: modelSelection("default"),
+      runtimePolicy,
+    });
+    yield* startTurn(runtime, providerThread);
+    yield* fake.takeRequest("prompt");
+    return { fake, runtime, takeEvent, providerThread };
+  });
+
+  const settleTurn = Effect.fnUntraced(function* (
+    fake: FakePi,
+    takeEvent: (
+      predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
+    ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2Event>,
+  ) {
+    yield* fake.emit({ type: "agent_start" });
+    yield* fake.emit({ type: "agent_settled" });
+    const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+    assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+  });
+
+  const takeCardStatus = (
+    takeEvent: (
+      predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
+    ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2Event>,
+    nativeRequestId: string,
+  ) =>
+    Effect.gen(function* () {
+      const request = yield* takeEvent(
+        (event) =>
+          event.type === "runtime_request.updated" &&
+          event.runtimeRequest.nativeRequestRef?.nativeId === nativeRequestId &&
+          event.runtimeRequest.status !== "pending",
+      );
+      const item = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === nativeRequestId &&
+          event.turnItem.status !== "waiting",
+      );
+      return {
+        request: request.type === "runtime_request.updated" ? request.runtimeRequest.status : null,
+        item: item.type === "turn_item.updated" ? item.turnItem.status : null,
+      };
+    });
+
+  // A later dialog's response proves no stray frame was written before it.
+  const nextUiResponseAfterProbe = Effect.fnUntraced(function* (
+    fake: FakePi,
+    runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+    takeEvent: (
+      predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
+    ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2Event>,
+  ) {
+    yield* fake.emit({
+      type: "extension_ui_request",
+      id: "probe",
+      method: "input",
+      title: "Probe",
+    });
+    const probe = yield* takeEvent(
+      (event) =>
+        event.type === "runtime_request.updated" &&
+        event.runtimeRequest.nativeRequestRef?.nativeId === "probe",
+    );
+    if (probe.type !== "runtime_request.updated") return assert.fail("expected probe request");
+    yield* runtime.respondToRuntimeRequest({
+      requestId: probe.runtimeRequest.id,
+      answers: { probe: "ok" },
+    });
+    return yield* fake.takeRequest("extension_ui_response");
+  });
+
+  it.effect("shows a captured omo question frame as one card with every question", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit(CAPTURED_QUESTION_FRAME);
+      const card = yield* takeQuestionCard(takeEvent, CAPTURED_QUESTION_FRAME.id);
+      assert.deepEqual(decodeUserInputQuestions(card.questions), [
+        {
+          id: "q1",
+          header: "Color",
+          question: "Which color for the capture probe?",
+          options: [
+            { label: "Red", description: "Warm color" },
+            { label: "Blue", description: "Cool color" },
+          ],
+          multiSelect: false,
+          allowCustomAnswer: true,
+        },
+        {
+          id: "q2",
+          header: "Toppings",
+          question: "Which toppings for the capture probe?",
+          options: [
+            { label: "Cheese", description: "Dairy" },
+            { label: "Ham", description: "Meat" },
+            { label: "Olives", description: "Fruit" },
+          ],
+          multiSelect: true,
+          allowCustomAnswer: true,
+        },
+      ]);
+      assert.equal(card.status, "waiting");
+      assert.isNotNull(card.providerTurnId);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("answers with selected labels and typed text, then refuses a second answer", () =>
+    Effect.gen(function* () {
+      const { fake, runtime, takeEvent } = yield* openQuestionTurn();
+      yield* fake.emit(questionFrame("q-answer", true));
+      const card = yield* takeQuestionCard(takeEvent, "q-answer");
+      yield* runtime.respondToRuntimeRequest({
+        requestId: card.requestId,
+        answers: { q1: "Purple, actually", q2: ["Cheese", "Olives"] },
+      });
+      const response = yield* fake.takeRequest("extension_ui_response");
+      assert.deepEqual(response, {
+        type: "extension_ui_response",
+        id: "q-answer",
+        answers: {
+          q1: { selected: [], text: "Purple, actually" },
+          q2: { selected: ["Cheese", "Olives"] },
+        },
+      });
+      assert.deepEqual(yield* takeCardStatus(takeEvent, "q-answer"), {
+        request: "resolved",
+        item: "completed",
+      });
+      const again = yield* runtime
+        .respondToRuntimeRequest({ requestId: card.requestId, answers: { q1: "Red" } })
+        .pipe(Effect.result);
+      assert.equal(again._tag, "Failure");
+      assert.equal((yield* nextUiResponseAfterProbe(fake, runtime, takeEvent))["id"], "probe");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("sends a single-select label as selected and a dismissal as cancelled", () =>
+    Effect.gen(function* () {
+      const { fake, runtime, takeEvent } = yield* openQuestionTurn();
+      yield* fake.emit(questionFrame("q-label", true));
+      const labelled = yield* takeQuestionCard(takeEvent, "q-label");
+      yield* runtime.respondToRuntimeRequest({
+        requestId: labelled.requestId,
+        answers: { q1: "Blue", q2: ["Ham"] },
+      });
+      assert.deepEqual((yield* fake.takeRequest("extension_ui_response"))["answers"], {
+        q1: { selected: ["Blue"] },
+        q2: { selected: ["Ham"] },
+      });
+      yield* fake.emit(questionFrame("q-dismiss", true));
+      const dismissed = yield* takeQuestionCard(takeEvent, "q-dismiss");
+      yield* runtime.respondToRuntimeRequest({ requestId: dismissed.requestId });
+      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
+        type: "extension_ui_response",
+        id: "q-dismiss",
+        cancelled: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    ["answered", "resolved", "completed"],
+    ["timed_out", "expired", "cancelled"],
+    ["cancelled", "cancelled", "cancelled"],
+  ] as const)(
+    "closes a pending card when pi reports question_resolved %s",
+    ([outcome, requestStatus, itemStatus]) =>
+      Effect.gen(function* () {
+        const { fake, runtime, takeEvent } = yield* openQuestionTurn();
+        yield* fake.emit(questionFrame("q-elsewhere", true));
+        const card = yield* takeQuestionCard(takeEvent, "q-elsewhere");
+        yield* fake.emit({
+          type: "question_resolved",
+          id: "q-elsewhere",
+          requestId: CAPTURED_QUESTION_FRAME.requestId,
+          toolCallId: CAPTURED_QUESTION_FRAME.toolCallId,
+          outcome,
+          answers: {},
+          unanswered: ["q1", "q2"],
+        });
+        assert.deepEqual(yield* takeCardStatus(takeEvent, "q-elsewhere"), {
+          request: requestStatus,
+          item: itemStatus,
+        });
+        const late = yield* runtime
+          .respondToRuntimeRequest({ requestId: card.requestId, answers: { q1: "Red" } })
+          .pipe(Effect.result);
+        assert.equal(late._tag, "Failure");
+        assert.equal((yield* nextUiResponseAfterProbe(fake, runtime, takeEvent))["id"], "probe");
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("ignores question_updated and question_resolved for unknown ids", () =>
+    Effect.gen(function* () {
+      const { fake, runtime, takeEvent } = yield* openQuestionTurn();
+      yield* fake.emit(questionFrame("q-live", true));
+      const card = yield* takeQuestionCard(takeEvent, "q-live");
+      yield* fake.emit({ type: "question_updated", id: "q-live", deadlineAtMs: 1, remainingMs: 1 });
+      yield* fake.emit({
+        type: "question_resolved",
+        id: "q-someone-else",
+        outcome: "answered",
+        answers: {},
+        unanswered: [],
+      });
+      yield* runtime.respondToRuntimeRequest({
+        requestId: card.requestId,
+        answers: { q1: "Red", q2: ["Ham"] },
+      });
+      assert.equal((yield* fake.takeRequest("extension_ui_response"))["id"], "q-live");
+      assert.deepEqual(yield* takeCardStatus(takeEvent, "q-live"), {
+        request: "resolved",
+        item: "completed",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps a non-blocking question answerable after its turn completes", () =>
+    Effect.gen(function* () {
+      const { fake, runtime, takeEvent } = yield* openQuestionTurn();
+      yield* fake.emit(questionFrame("q-blocking", true));
+      yield* takeQuestionCard(takeEvent, "q-blocking");
+      yield* fake.emit(questionFrame("q-later", false));
+      const later = yield* takeQuestionCard(takeEvent, "q-later");
+      yield* settleTurn(fake, takeEvent);
+      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
+        type: "extension_ui_response",
+        id: "q-blocking",
+        cancelled: true,
+      });
+      yield* runtime.respondToRuntimeRequest({
+        requestId: later.requestId,
+        answers: { q1: "Red", q2: ["Cheese", "Ham"] },
+      });
+      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
+        type: "extension_ui_response",
+        id: "q-later",
+        answers: { q1: { selected: ["Red"] }, q2: { selected: ["Cheese", "Ham"] } },
+      });
+      assert.deepEqual(yield* takeCardStatus(takeEvent, "q-later"), {
+        request: "resolved",
+        item: "completed",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("cancels a non-blocking question when the pi process exits", () =>
+    Effect.gen(function* () {
+      const { fake, takeEvent } = yield* openQuestionTurn();
+      yield* fake.emit(questionFrame("q-orphan", false));
+      yield* takeQuestionCard(takeEvent, "q-orphan");
+      yield* settleTurn(fake, takeEvent);
+      yield* fake.closeStdout;
+      assert.deepEqual(yield* takeCardStatus(takeEvent, "q-orphan"), {
+        request: "cancelled",
+        item: "cancelled",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("cancels a non-blocking question when the user stops the turn", () =>
+    Effect.gen(function* () {
+      const { fake, runtime, takeEvent, providerThread } = yield* openQuestionTurn();
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      if (running.type !== "provider_turn.updated") return assert.fail("expected a running turn");
+      yield* fake.emit(questionFrame("q-stopped", false));
+      yield* takeQuestionCard(takeEvent, "q-stopped");
+      yield* runtime.interruptTurn({ providerThread, providerTurnId: running.providerTurn.id });
+      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
+        type: "extension_ui_response",
+        id: "q-stopped",
+        cancelled: true,
+      });
+      assert.deepEqual(yield* takeCardStatus(takeEvent, "q-stopped"), {
+        request: "cancelled",
+        item: "cancelled",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("tolerates malformed question frames and cancels one with no usable question", () =>
+    Effect.gen(function* () {
+      const { fake, takeEvent } = yield* openQuestionTurn();
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "q-loose",
+        method: "question",
+        waitForAnswer: true,
+        futureField: { nested: true },
+        questions: [
+          { id: "free", header: " ", question: "Anything to add?", multiSelect: false },
+          { header: "No id", question: "Dropped", options: [] },
+          "not a question",
+        ],
+      });
+      const card = yield* takeQuestionCard(takeEvent, "q-loose");
+      assert.deepEqual(decodeUserInputQuestions(card.questions), [
+        {
+          id: "free",
+          header: "Question",
+          question: "Anything to add?",
+          options: [],
+          multiSelect: false,
+          allowCustomAnswer: true,
+        },
+      ]);
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "q-empty",
+        method: "question",
+        waitForAnswer: true,
+        questions: [{ header: "No id" }],
+      });
+      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
+        type: "extension_ui_response",
+        id: "q-empty",
+        cancelled: true,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+});

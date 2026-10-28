@@ -286,6 +286,9 @@ export type OrchestratorFixtureInputStep =
   | {
       readonly type: "advance_clock";
       readonly duration: Duration.Input;
+    }
+  | {
+      readonly type: "stop_thread";
     };
 
 export interface OrchestratorFixtureInput {
@@ -854,6 +857,17 @@ export function materializeFixtureInput(input: {
             steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
           }
           steps.push({ type: "advance_clock", duration: "1 millis" });
+          steps.push({ type: "await_thread_idle", threadId: ids.threadId });
+          break;
+        case "stop_thread":
+          pushDispatch({
+            type: "thread.stop",
+            commandId: yield* idAllocator.allocate.command({
+              fixtureName: input.scenario,
+              commandName: `stop-thread-${stepIndex}`,
+            }),
+            threadId: ids.threadId,
+          });
           steps.push({ type: "await_thread_idle", threadId: ids.threadId });
           break;
         case "stop_background_work":

@@ -72,6 +72,14 @@ import {
 } from "./mcpInjection.ts";
 import { PI_FILE_CHANGE_TOOLS } from "./mcpExtensionSource.ts";
 import { asPiModelSelectionError } from "./modelSelectionError.ts";
+import {
+  PI_QUESTION_METHOD,
+  PiNativeQuestions,
+  piPromptClosedStatus,
+  piQuestionResponse,
+  piQuestions,
+  piQuestionTitle,
+} from "./questionCapability.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -381,7 +389,7 @@ interface PiTurnTreeRefs {
 
 interface PendingPiPrompt {
   readonly nativeRequestId: string;
-  readonly method: "select" | "confirm" | "input" | "editor";
+  readonly method: "select" | "confirm" | "input" | "editor" | typeof PI_QUESTION_METHOD;
   readonly questionId: string;
   readonly approvalKey: string;
   readonly expiresAt: number | null;
@@ -522,6 +530,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
+      const nativeQuestions = new PiNativeQuestions<PendingPiPrompt>();
       const sessionApprovals = new Set<string>();
       // Pi can settle immediately after dialog response; serialize so terminal cannot overtake request resolution.
       const sessionEventPermit = yield* Semaphore.make(1);
@@ -1243,12 +1252,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           method !== "select" &&
           method !== "confirm" &&
           method !== "input" &&
-          method !== "editor"
+          method !== "editor" &&
+          method !== PI_QUESTION_METHOD
         ) {
           yield* Effect.logDebug("Ignoring pi extension UI update.", { method });
           return;
         }
         if (nativeRequestId === undefined) return;
+        if (yield* nativeQuestions.refuseUnusable(event, nativeRequestId, connection.send)) return;
         const approvalTitle = recordString(event, "title") ?? "";
         const approvalKey = `${approvalTitle.length}:${approvalTitle}${recordString(event, "message") ?? ""}`;
         if (method === "confirm" && sessionApprovals.has(approvalKey)) {
@@ -1260,7 +1271,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         const state = threadState;
-        const turn = state?.activeTurn ?? null;
+        const turn = nativeQuestions.turnFor(event, state?.activeTurn ?? null);
         const createdAt = yield* DateTime.now;
         const timeout = recordNumber(event, "timeout");
         // Pi treats zero as no timeout and negative durations as immediate expiry.
@@ -1274,7 +1285,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           nativeRequestId,
         });
         const nodeId = idAllocator.derive.approvalNode({ requestId });
-        const title = recordString(event, "title") ?? method;
+        const title =
+          recordString(event, "title") ??
+          (method === PI_QUESTION_METHOD ? piQuestionTitle(event) : method);
         const threadId =
           turn?.turnInput.threadId ?? state?.providerThread.appThreadId ?? input.threadId;
         const providerThreadId = state?.providerThread.id ?? null;
@@ -1336,7 +1349,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ...itemBase,
                 type: "user_input_request",
                 requestId,
-                questions: [piQuestion(nativeRequestId, method, title, event)],
+                questions:
+                  method === PI_QUESTION_METHOD
+                    ? piQuestions(event)
+                    : [piQuestion(nativeRequestId, method, title, event)],
               };
         const pending: PendingPiPrompt = {
           nativeRequestId,
@@ -1349,7 +1365,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           node,
           turnItem,
         };
-        pendingPrompts.set(String(requestId), pending);
+        nativeQuestions.promptsFor(event, pendingPrompts).set(String(requestId), pending);
         yield* emit({
           type: "runtime_request.updated",
           driver: PI_PROVIDER,
@@ -1619,7 +1635,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         // Model hooks can show dialogs before turn ownership; keep requests session-scoped and buffer output.
         const interactiveUiRequest =
           event["type"] === "extension_ui_request" &&
-          ["select", "confirm", "input", "editor"].includes(String(event["method"]));
+          ["select", "confirm", "input", "editor", PI_QUESTION_METHOD].includes(
+            String(event["method"]),
+          );
         if (
           threadState?.activeTurn === null &&
           pendingWake !== null &&
@@ -1888,6 +1906,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             yield* emitExtensionError(event);
             return;
           }
+          case "question_resolved":
+            return yield* nativeQuestions.closeResolved(event, pendingPrompts, PI_PROVIDER, emit);
           case "agent_settled": {
             if (turn?.interrupted === true) {
               if (state !== null) yield* finalizeTurn(state);
@@ -2090,6 +2110,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               } else {
                 yield* cancelPendingPrompts(yield* DateTime.now);
               }
+              yield* nativeQuestions.cancelDetached(cancelPrompt);
               if (unsolicitedActivityDetected) {
                 yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
                 yield* Queue.end(events);
@@ -2633,6 +2654,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               return yield* protocolError(`Pi turn ${interruptInput.providerTurnId} is not active`);
             }
             turn.interrupted = true;
+            yield* sessionEventPermit.withPermits(1)(nativeQuestions.cancelDetached(cancelPrompt));
             if (
               interruptInput.requestRuntimeRestart === true ||
               turn.settleWhenIdle ||
@@ -2674,7 +2696,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ),
         respondToRuntimeRequest: Effect.fn("PiAdapter.respondToRuntimeRequest")(
           function* (requestInput) {
-            const pending = pendingPrompts.get(String(requestInput.requestId));
+            const pending =
+              pendingPrompts.get(String(requestInput.requestId)) ??
+              nativeQuestions.pendingNativeQuestions.get(String(requestInput.requestId));
             if (pending === undefined) {
               return yield* protocolError(
                 `No pending Pi extension request ${requestInput.requestId}`,
@@ -2686,6 +2710,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               DateTime.toEpochMillis(answeredAt) >= pending.expiresAt
             ) {
               pendingPrompts.delete(String(requestInput.requestId));
+              nativeQuestions.pendingNativeQuestions.delete(String(requestInput.requestId));
               yield* cancelPrompt(pending, answeredAt);
               return yield* protocolError(
                 `Pi extension request ${requestInput.requestId} has expired`,
@@ -2698,11 +2723,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               ...response,
             });
             pendingPrompts.delete(String(requestInput.requestId));
+            nativeQuestions.pendingNativeQuestions.delete(String(requestInput.requestId));
             if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
             if (pending.method === "confirm" && requestInput.decision === "acceptForSession") {
               sessionApprovals.add(pending.approvalKey);
             }
             const resolvedAt = yield* DateTime.now;
+            const closedStatus = piPromptClosedStatus(pending, response);
             pending.runtimeRequest = {
               ...pending.runtimeRequest,
               status: "resolved",
@@ -2717,14 +2744,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             yield* emit({
               type: "node.updated",
               driver: PI_PROVIDER,
-              node: { ...pending.node, status: "completed", completedAt: resolvedAt },
+              node: { ...pending.node, status: closedStatus, completedAt: resolvedAt },
             });
             yield* emit({
               type: "turn_item.updated",
               driver: PI_PROVIDER,
               turnItem: {
                 ...pending.turnItem,
-                status: "completed",
+                status: closedStatus,
                 completedAt: resolvedAt,
                 updatedAt: resolvedAt,
               },
@@ -3291,6 +3318,7 @@ function piUiResponse(
   decision: ProviderApprovalDecision | undefined,
   answers: Record<string, unknown> | undefined,
 ): PiRpcRecord {
+  if (pending.method === PI_QUESTION_METHOD) return piQuestionResponse(pending.turnItem, answers);
   if (pending.method === "confirm") {
     if (decision === "accept" || decision === "acceptForSession") return { confirmed: true };
     if (decision === "decline") return { confirmed: false };
