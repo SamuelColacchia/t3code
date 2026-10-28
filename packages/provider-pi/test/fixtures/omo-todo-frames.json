@@ -1,0 +1,550 @@
+{
+  "_source": "Captured 2026-10-28 from `omo --mode rpc --no-session` (todo tool); frames verbatim.",
+  "sequence": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "toolu_01QhkoTUDmGGx7aQDWvZa83y",
+      "toolName": "todo",
+      "args": {
+        "op": "init",
+        "list": [
+          {
+            "phase": "Alpha",
+            "items": ["Write alpha one", "Write alpha two"]
+          },
+          {
+            "phase": "Beta",
+            "items": ["Write beta one"]
+          }
+        ]
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "toolu_01QhkoTUDmGGx7aQDWvZa83y",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Ask: Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)\nNow: Write alpha one (Alpha)\nNext: Write alpha two (Alpha)\n\nRemaining items (3):\n  - Write alpha one [in_progress] (Alpha)\n  - Write alpha two [pending] (Alpha)\n  - Write beta one [pending] (Beta)\nOverall: 0/3 done, 3 open.\nActive phase 1/2 \"Alpha\" (0/2).\n  Alpha:\n    - [ ] Write alpha one (in progress)\n    - [ ] Write alpha two\n  Beta:\n    - [ ] Write beta one\n\nHandoff due: the plan exists. Before your next tool call, write the Ask / For you / Now / Next block."
+          },
+          {
+            "type": "text",
+            "text": "<system-reminder>\nNew todo tasks were added, but this thread has no goal registered.\nRegister one with create_goal only when the work must outlive this turn - it waits on external state or needs more than one verify-and-fix round.\nOtherwise continue without a goal.\n</system-reminder>"
+          }
+        ],
+        "details": {
+          "op": "init",
+          "phases": [
+            {
+              "name": "Alpha",
+              "tasks": [
+                {
+                  "content": "Write alpha one",
+                  "status": "in_progress"
+                },
+                {
+                  "content": "Write alpha two",
+                  "status": "pending"
+                }
+              ]
+            },
+            {
+              "name": "Beta",
+              "tasks": [
+                {
+                  "content": "Write beta one",
+                  "status": "pending"
+                }
+              ]
+            }
+          ],
+          "storage": "memory",
+          "ask": {
+            "entryId": "f000ee77",
+            "text": "Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)",
+            "capturedAt": 1793176183258
+          }
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "toolu_01SVCGJNWy6ppar1yqp5RnLo",
+      "toolName": "todo",
+      "args": {
+        "op": "start",
+        "task": "Write alpha two"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "toolu_01SVCGJNWy6ppar1yqp5RnLo",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Ask: Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)\nNow: Write alpha two (Alpha)\nNext: Write alpha one (Alpha)\n\nRemaining items (3):\n  - Write alpha one [pending] (Alpha)\n  - Write alpha two [in_progress] (Alpha)\n  - Write beta one [pending] (Beta)\nOverall: 0/3 done, 3 open.\nActive phase 1/2 \"Alpha\" (0/2).\n  Alpha:\n    - [ ] Write alpha one\n    - [ ] Write alpha two (in progress)\n  Beta:\n    - [ ] Write beta one"
+          }
+        ],
+        "details": {
+          "op": "start",
+          "phases": [
+            {
+              "name": "Alpha",
+              "tasks": [
+                {
+                  "content": "Write alpha one",
+                  "status": "pending"
+                },
+                {
+                  "content": "Write alpha two",
+                  "status": "in_progress"
+                }
+              ]
+            },
+            {
+              "name": "Beta",
+              "tasks": [
+                {
+                  "content": "Write beta one",
+                  "status": "pending"
+                }
+              ]
+            }
+          ],
+          "storage": "memory",
+          "ask": {
+            "entryId": "f000ee77",
+            "text": "Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)",
+            "capturedAt": 1793176183258
+          }
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "toolu_01H3PqnqaaVcPYdNeVGebKZF",
+      "toolName": "todo",
+      "args": {
+        "op": "done",
+        "task": "Write alpha one"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "toolu_01H3PqnqaaVcPYdNeVGebKZF",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Ask: Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)\nNow: Write alpha two (Alpha)\nNext: Write beta one (Beta)\n\nRemaining items (2):\n  - Write alpha two [in_progress] (Alpha)\n  - Write beta one [pending] (Beta)\nOverall: 1/3 done, 2 open.\nActive phase 1/2 \"Alpha\" (1/2).\n  Alpha:\n    - [X] Write alpha one\n    - [ ] Write alpha two (in progress)\n  Beta:\n    - [ ] Write beta one"
+          }
+        ],
+        "details": {
+          "op": "done",
+          "phases": [
+            {
+              "name": "Alpha",
+              "tasks": [
+                {
+                  "content": "Write alpha one",
+                  "status": "completed"
+                },
+                {
+                  "content": "Write alpha two",
+                  "status": "in_progress"
+                }
+              ]
+            },
+            {
+              "name": "Beta",
+              "tasks": [
+                {
+                  "content": "Write beta one",
+                  "status": "pending"
+                }
+              ]
+            }
+          ],
+          "storage": "memory",
+          "ask": {
+            "entryId": "f000ee77",
+            "text": "Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)",
+            "capturedAt": 1793176183258
+          },
+          "completedTasks": [
+            {
+              "phase": "Alpha",
+              "content": "Write alpha one"
+            }
+          ]
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "toolu_01PNTZLETvnocTUfJM5f9JLH",
+      "toolName": "todo",
+      "args": {
+        "op": "drop",
+        "task": "Write alpha two"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "toolu_01PNTZLETvnocTUfJM5f9JLH",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Ask: Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)\nNow: Write beta one (Beta)\nNext: none\n\nRemaining items (1):\n  - Write beta one [in_progress] (Beta)\nOverall: 2/3 done, 1 open.\nActive phase 2/2 \"Beta\" (0/1).\n  Alpha:\n    - [X] Write alpha one\n    - [ ] Write alpha two (dropped)\n  Beta:\n    - [ ] Write beta one (in progress)\n\nHandoff due: a phase closed. Before your next tool call, write the Ask / For you / Now / Next block."
+          }
+        ],
+        "details": {
+          "op": "drop",
+          "phases": [
+            {
+              "name": "Alpha",
+              "tasks": [
+                {
+                  "content": "Write alpha one",
+                  "status": "completed"
+                },
+                {
+                  "content": "Write alpha two",
+                  "status": "abandoned"
+                }
+              ]
+            },
+            {
+              "name": "Beta",
+              "tasks": [
+                {
+                  "content": "Write beta one",
+                  "status": "in_progress"
+                }
+              ]
+            }
+          ],
+          "storage": "memory",
+          "ask": {
+            "entryId": "f000ee77",
+            "text": "Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)",
+            "capturedAt": 1793176183258
+          }
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "toolu_015kZnZzLKokyTaRjbWJzUHw",
+      "toolName": "todo",
+      "args": {
+        "op": "append",
+        "phase": "Beta",
+        "items": ["Write beta two"]
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "toolu_015kZnZzLKokyTaRjbWJzUHw",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Ask: Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)\nNow: Write beta one (Beta)\nNext: Write beta two (Beta)\n\nRemaining items (2):\n  - Write beta one [in_progress] (Beta)\n  - Write beta two [pending] (Beta)\nOverall: 2/4 done, 2 open.\nActive phase 2/2 \"Beta\" (0/2).\n  Alpha:\n    - [X] Write alpha one\n    - [ ] Write alpha two (dropped)\n  Beta:\n    - [ ] Write beta one (in progress)\n    - [ ] Write beta two"
+          },
+          {
+            "type": "text",
+            "text": "<system-reminder>\nNew todo tasks were added, but this thread has no goal registered.\nRegister one with create_goal only when the work must outlive this turn - it waits on external state or needs more than one verify-and-fix round.\nOtherwise continue without a goal.\n</system-reminder>"
+          }
+        ],
+        "details": {
+          "op": "append",
+          "phases": [
+            {
+              "name": "Alpha",
+              "tasks": [
+                {
+                  "content": "Write alpha one",
+                  "status": "completed"
+                },
+                {
+                  "content": "Write alpha two",
+                  "status": "abandoned"
+                }
+              ]
+            },
+            {
+              "name": "Beta",
+              "tasks": [
+                {
+                  "content": "Write beta one",
+                  "status": "in_progress"
+                },
+                {
+                  "content": "Write beta two",
+                  "status": "pending"
+                }
+              ]
+            }
+          ],
+          "storage": "memory",
+          "ask": {
+            "entryId": "f000ee77",
+            "text": "Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)",
+            "capturedAt": 1793176183258
+          }
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "toolu_01FYALiUmuUPe7kG4yepW6WC",
+      "toolName": "todo",
+      "args": {
+        "op": "done",
+        "task": "Write beta one"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "toolu_01FYALiUmuUPe7kG4yepW6WC",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Ask: Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)\nNow: Write beta two (Beta)\nNext: none\n\nRemaining items (1):\n  - Write beta two [in_progress] (Beta)\nOverall: 3/4 done, 1 open.\nActive phase 2/2 \"Beta\" (1/2).\n  Alpha:\n    - [X] Write alpha one\n    - [ ] Write alpha two (dropped)\n  Beta:\n    - [X] Write beta one\n    - [ ] Write beta two (in progress)"
+          }
+        ],
+        "details": {
+          "op": "done",
+          "phases": [
+            {
+              "name": "Alpha",
+              "tasks": [
+                {
+                  "content": "Write alpha one",
+                  "status": "completed"
+                },
+                {
+                  "content": "Write alpha two",
+                  "status": "abandoned"
+                }
+              ]
+            },
+            {
+              "name": "Beta",
+              "tasks": [
+                {
+                  "content": "Write beta one",
+                  "status": "completed"
+                },
+                {
+                  "content": "Write beta two",
+                  "status": "in_progress"
+                }
+              ]
+            }
+          ],
+          "storage": "memory",
+          "ask": {
+            "entryId": "f000ee77",
+            "text": "Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files: 1) op init with two phases: phase 'Alpha' items ['Write alpha one','Write alpha two'], phase 'Beta' item… (+230 chars)",
+            "capturedAt": 1793176183258
+          },
+          "completedTasks": [
+            {
+              "phase": "Beta",
+              "content": "Write beta one"
+            }
+          ]
+        }
+      },
+      "isError": false
+    }
+  ],
+  "errorsAndReinit": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "toolu_01Bkix72DWoLHRgjXSkNeCMv",
+      "toolName": "todo",
+      "args": {
+        "op": "init",
+        "list": [
+          {
+            "phase": "Gamma",
+            "items": ["First gamma", "Second gamma"]
+          }
+        ]
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "toolu_01Bkix72DWoLHRgjXSkNeCMv",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Ask: Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files. Some steps are expected to fail; continue anyway: 1) op init with phase 'Gamma' items ['First gamma','Se… (+200 chars)\nNow: First gamma (Gamma)\nNext: Second gamma (Gamma)\n\nRemaining items (2):\n  - First gamma [in_progress] (Gamma)\n  - Second gamma [pending] (Gamma)\nOverall: 0/2 done, 2 open.\nActive phase 1/1 \"Gamma\" (0/2).\n  Gamma:\n    - [ ] First gamma (in progress)\n    - [ ] Second gamma\n\nHandoff due: the plan exists. Before your next tool call, write the Ask / For you / Now / Next block."
+          },
+          {
+            "type": "text",
+            "text": "<system-reminder>\nNew todo tasks were added, but this thread has no goal registered.\nRegister one with create_goal only when the work must outlive this turn - it waits on external state or needs more than one verify-and-fix round.\nOtherwise continue without a goal.\n</system-reminder>"
+          }
+        ],
+        "details": {
+          "op": "init",
+          "phases": [
+            {
+              "name": "Gamma",
+              "tasks": [
+                {
+                  "content": "First gamma",
+                  "status": "in_progress"
+                },
+                {
+                  "content": "Second gamma",
+                  "status": "pending"
+                }
+              ]
+            }
+          ],
+          "storage": "memory",
+          "ask": {
+            "entryId": "c1dfd200",
+            "text": "Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files. Some steps are expected to fail; continue anyway: 1) op init with phase 'Gamma' items ['First gamma','Se… (+200 chars)",
+            "capturedAt": 1793176283886
+          }
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "toolu_01N6XxShtkV1GNP19smL5hZo",
+      "toolName": "todo",
+      "args": {
+        "op": "done",
+        "task": "No such task here"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "toolu_01N6XxShtkV1GNP19smL5hZo",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Ask: Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files. Some steps are expected to fail; continue anyway: 1) op init with phase 'Gamma' items ['First gamma','Se… (+200 chars)\nNow: First gamma (Gamma)\nNext: Second gamma (Gamma)\n\nErrors: Task \"No such task here\" not found\nRemaining items (2):\n  - First gamma [in_progress] (Gamma)\n  - Second gamma [pending] (Gamma)\nOverall: 0/2 done, 2 open.\nActive phase 1/1 \"Gamma\" (0/2).\n  Gamma:\n    - [ ] First gamma (in progress)\n    - [ ] Second gamma"
+          }
+        ],
+        "details": {}
+      },
+      "isError": true
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "toolu_01TVAvZkuH7uhQJUWWipFLNn",
+      "toolName": "todo",
+      "args": {
+        "op": "init",
+        "list": [
+          {
+            "phase": "Delta",
+            "items": ["Only delta"]
+          }
+        ]
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "toolu_01TVAvZkuH7uhQJUWWipFLNn",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Ask: Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files. Some steps are expected to fail; continue anyway: 1) op init with phase 'Gamma' items ['First gamma','Se… (+200 chars)\nNow: Only delta (Delta)\nNext: none\n\nRemaining items (1):\n  - Only delta [in_progress] (Delta)\nOverall: 0/1 done, 1 open.\nActive phase 1/1 \"Delta\" (0/1).\n  Delta:\n    - [ ] Only delta (in progress)"
+          },
+          {
+            "type": "text",
+            "text": "<system-reminder>\nNew todo tasks were added, but this thread has no goal registered.\nRegister one with create_goal only when the work must outlive this turn - it waits on external state or needs more than one verify-and-fix round.\nOtherwise continue without a goal.\n</system-reminder>"
+          }
+        ],
+        "details": {
+          "op": "init",
+          "phases": [
+            {
+              "name": "Delta",
+              "tasks": [
+                {
+                  "content": "Only delta",
+                  "status": "in_progress"
+                }
+              ]
+            }
+          ],
+          "storage": "memory",
+          "ask": {
+            "entryId": "c1dfd200",
+            "text": "Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files. Some steps are expected to fail; continue anyway: 1) op init with phase 'Gamma' items ['First gamma','Se… (+200 chars)",
+            "capturedAt": 1793176288113
+          }
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "toolu_01NV2MNdPyp89i7PeQ8p2m7g",
+      "toolName": "todo",
+      "args": {
+        "op": "rm"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "toolu_01NV2MNdPyp89i7PeQ8p2m7g",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Ask: Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files. Some steps are expected to fail; continue anyway: 1) op init with phase 'Gamma' items ['First gamma','Se… (+200 chars)\nNow: none - no todo list\nNext: none\n\nTodo list cleared."
+          }
+        ],
+        "details": {
+          "op": "rm",
+          "phases": [
+            {
+              "name": "Delta",
+              "tasks": []
+            }
+          ],
+          "storage": "memory",
+          "ask": {
+            "entryId": "c1dfd200",
+            "text": "Exercise your `todo` tool exactly as follows, one tool call per step, no other tools, no files. Some steps are expected to fail; continue anyway: 1) op init with phase 'Gamma' items ['First gamma','Se… (+200 chars)",
+            "capturedAt": 1793176288113
+          }
+        }
+      },
+      "isError": false
+    }
+  ]
+}

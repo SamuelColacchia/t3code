@@ -80,6 +80,7 @@ import {
   piQuestions,
   piQuestionTitle,
 } from "./questionCapability.ts";
+import { emitPiTodoPlan } from "./todoPlan.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -1765,6 +1766,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return;
           case "tool_execution_end":
             if (turn !== null) yield* emitToolItem(turn, event, "end");
+            if (turn !== null) yield* emitPiTodoPlan(turn, event, emit, idAllocator);
             return;
           case "compaction_start": {
             if (turn === null) return;

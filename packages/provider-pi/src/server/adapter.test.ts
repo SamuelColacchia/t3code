@@ -54,6 +54,7 @@ import {
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
+import omoTodoFrames from "../../test/fixtures/omo-todo-frames.json" with { type: "json" };
 
 const layerTest = Layer.mergeAll(
   NodeServices.layer,
@@ -4713,6 +4714,217 @@ describe("PiAdapterV2 native questions", () => {
         id: "q-empty",
         cancelled: true,
       });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+});
+
+describe("PiAdapterV2 OMO todo plan", () => {
+  type PlanUpdated = Extract<
+    ProviderAdapter.ProviderAdapterV2Event,
+    { readonly type: "plan.updated" }
+  >;
+  const frames = (records: ReadonlyArray<unknown>) => records as ReadonlyArray<PiRpcRecord>;
+  const stepsOf = (event: PlanUpdated) =>
+    event.plan.kind === "todo_list"
+      ? event.plan.steps.map((step) => [step.text, step.status] as const)
+      : [];
+
+  const startTodoTurn = Effect.fnUntraced(function* () {
+    const fake = yield* makeFakePi;
+    const { runtime, takeEvent } = yield* openRuntime(fake);
+    const providerThread = yield* runtime.ensureThread({
+      threadId: THREAD_ID,
+      modelSelection: modelSelection("default"),
+      runtimePolicy,
+    });
+    yield* startTurn(runtime, providerThread);
+    yield* fake.takeRequest("prompt");
+    yield* fake.emit({ type: "agent_start" });
+    const takePlan = takeEvent(
+      (event) => event.type === "plan.updated",
+    ) as Effect.Effect<PlanUpdated>;
+    return { fake, runtime, providerThread, takeEvent, takePlan };
+  });
+
+  it.effect("follows OMO's todo snapshots as one thread plan", () =>
+    Effect.gen(function* () {
+      const { fake, takePlan } = yield* startTodoTurn();
+      const plans: Array<PlanUpdated> = [];
+      for (const frame of frames(omoTodoFrames.sequence)) {
+        yield* fake.emit(frame);
+        if (frame["type"] === "tool_execution_end") plans.push(yield* takePlan);
+      }
+
+      assert.deepStrictEqual(plans.map(stepsOf), [
+        [
+          ["Write alpha one", "running"],
+          ["Write alpha two", "pending"],
+          ["Write beta one", "pending"],
+        ],
+        [
+          ["Write alpha one", "pending"],
+          ["Write alpha two", "running"],
+          ["Write beta one", "pending"],
+        ],
+        [
+          ["Write alpha one", "completed"],
+          ["Write alpha two", "running"],
+          ["Write beta one", "pending"],
+        ],
+        [
+          ["Write alpha one", "completed"],
+          ["(dropped) Write alpha two", "completed"],
+          ["Write beta one", "running"],
+        ],
+        [
+          ["Write alpha one", "completed"],
+          ["(dropped) Write alpha two", "completed"],
+          ["Write beta one", "running"],
+          ["Write beta two", "pending"],
+        ],
+        [
+          ["Write alpha one", "completed"],
+          ["(dropped) Write alpha two", "completed"],
+          ["Write beta one", "completed"],
+          ["Write beta two", "running"],
+        ],
+      ]);
+      const first = plans[0]!.plan;
+      assert.isTrue(plans.every((event) => event.plan.id === first.id));
+      assert.isTrue(
+        plans.every(
+          (event) =>
+            event.driver === PI_PROVIDER &&
+            event.plan.kind === "todo_list" &&
+            event.plan.status === "active" &&
+            event.plan.threadId === THREAD_ID &&
+            event.plan.runId === RunId.make(`run:${THREAD_ID}:1`),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps the plan through a failed todo call and replaces it on re-init", () =>
+    Effect.gen(function* () {
+      const { fake, takePlan } = yield* startTodoTurn();
+      const plans: Array<PlanUpdated> = [];
+      for (const frame of frames(omoTodoFrames.errorsAndReinit)) {
+        yield* fake.emit(frame);
+        if (frame["type"] === "tool_execution_end" && frame["isError"] !== true) {
+          plans.push(yield* takePlan);
+        }
+      }
+
+      assert.deepStrictEqual(plans.map(stepsOf), [
+        [
+          ["First gamma", "running"],
+          ["Second gamma", "pending"],
+        ],
+        [["Only delta", "running"]],
+        [],
+      ]);
+      assert.isTrue(plans.every((event) => event.plan.id === plans[0]!.plan.id));
+      assert.deepStrictEqual(
+        plans.map((event) => event.plan.status),
+        ["active", "active", "active"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("emits no plan for other tools or todo results without a list", () =>
+    Effect.gen(function* () {
+      const { fake, takeEvent } = yield* startTodoTurn();
+      const phases = [{ name: "Fake", tasks: [{ content: "Not a todo", status: "pending" }] }];
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_bash",
+        toolName: "bash",
+        args: { command: "true" },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_bash",
+        toolName: "bash",
+        isError: false,
+        result: { content: [{ type: "text", text: "" }], details: { phases } },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_todo_unknown_op",
+        toolName: "todo",
+        isError: false,
+        result: { content: [{ type: "text", text: "Unknown op" }], details: { op: "bogus" } },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_todo_no_details",
+        toolName: "todo",
+        isError: false,
+        result: { content: [{ type: "text", text: "No details" }] },
+      });
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Done" }],
+          stopReason: "stop",
+        },
+      });
+      fake.queueState({ isStreaming: false });
+      yield* fake.emit({ type: "agent_settled" });
+
+      const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      yield* takeEvent((event) => {
+        seen.push(event);
+        return event.type === "turn.terminal";
+      });
+      assert.isTrue(
+        seen.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.toolName === "todo",
+        ),
+      );
+      assert.isFalse(
+        seen.some(
+          (event) =>
+            event.type === "plan.updated" ||
+            (event.type === "turn_item.updated" && event.turnItem.type === "todo_list"),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("starts a new plan for each turn", () =>
+    Effect.gen(function* () {
+      const { fake, runtime, providerThread, takeEvent, takePlan } = yield* startTodoTurn();
+      const [initStart, initEnd] = frames(omoTodoFrames.sequence);
+      yield* fake.emit(initStart!);
+      yield* fake.emit(initEnd!);
+      const first = yield* takePlan;
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Done" }],
+          stopReason: "stop",
+        },
+      });
+      fake.queueState({ isStreaming: false });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      yield* startTurn(runtime, providerThread, "default", [], "Again", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ ...initEnd!, toolCallId: "call_todo_turn_two" });
+      const second = yield* takePlan;
+
+      assert.notEqual(second.plan.id, first.plan.id);
+      assert.equal(first.plan.runId, RunId.make(`run:${THREAD_ID}:1`));
+      assert.equal(second.plan.runId, RunId.make(`run:${THREAD_ID}:2`));
+      assert.deepStrictEqual(stepsOf(second), stepsOf(first));
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 });
