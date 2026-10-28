@@ -1,6 +1,8 @@
 // No T3 imports inside the string; resolve Pi and typebox from the user's Pi install.
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 
+import { parseExtraReadOnlyTools, T3_PI_EXTRA_READ_ONLY_TOOLS_ENV } from "./readOnlyTools.ts";
+
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
@@ -23,8 +25,18 @@ const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
 const PROTOCOL = "2025-06-18";
-const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
+const parseExtraReadOnlyTools = ${parseExtraReadOnlyTools.toString()};
+const READ_ONLY_TOOLS = new Set([
+  "read",
+  "grep",
+  "find",
+  "ls",
+  ...parseExtraReadOnlyTools(
+    process.env[${JSON.stringify(T3_PI_EXTRA_READ_ONLY_TOOLS_ENV)}],
+    [...FILE_CHANGE_TOOLS],
+  ),
+]);
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 

@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
+import { parseExtraReadOnlyTools, T3_PI_EXTRA_READ_ONLY_TOOLS_ENV } from "./readOnlyTools.ts";
 
 type RequestHook = (
   event: { payload: unknown },
@@ -307,6 +308,76 @@ describe("Pi tool discovery permissions", () => {
         true,
       );
       assert.equal(confirmations.length, 6);
+    },
+  );
+
+  async function confirmedTools(
+    options: { runtimeMode: string; extraReadOnlyTools?: string | undefined },
+    toolNames: ReadonlyArray<string>,
+  ) {
+    const bridge = await loadMcpBridge({ modern: true, ...options });
+    const hook = bridge.handlers.get("tool_call") as unknown as (
+      event: { toolName: string; input: unknown },
+      ctx: { ui: { confirm: (title: string) => Promise<boolean> } },
+    ) => Promise<{ block: true; reason: string } | undefined>;
+    const confirmations: string[] = [];
+    const ctx = {
+      ui: {
+        confirm: async (title: string) => {
+          confirmations.push(title);
+          return false;
+        },
+      },
+    };
+    for (const toolName of toolNames) {
+      const before = confirmations.length;
+      const result = await hook({ toolName, input: {} }, ctx);
+      assert.equal(result?.block, confirmations.length > before ? true : undefined);
+    }
+    return confirmations;
+  }
+
+  it.each([
+    {
+      runtimeMode: "approval-required",
+      prompts: ["Allow edit?", "Allow write?", "Allow eval?"],
+    },
+    { runtimeMode: "auto-accept-edits", prompts: ["Allow eval?"] },
+  ])(
+    "exempts provider-named read-only tools in $runtimeMode and still gates the rest",
+    async ({ runtimeMode, prompts }) => {
+      const confirmations = await confirmedTools(
+        { runtimeMode, extraReadOnlyTools: "todo,lsp_diagnostics" },
+        ["todo", "lsp_diagnostics", "read", "edit", "write", "eval"],
+      );
+      assert.deepEqual(confirmations, prompts);
+    },
+  );
+
+  it("ships the read-only parser from readOnlyTools.ts", () => {
+    assert.include(PI_T3_MCP_EXTENSION_SOURCE, parseExtraReadOnlyTools.toString());
+    assert.include(PI_T3_MCP_EXTENSION_SOURCE, JSON.stringify(T3_PI_EXTRA_READ_ONLY_TOOLS_ENV));
+  });
+
+  it("tolerates padded, empty, and duplicate names but never exempts file-change tools", async () => {
+    const confirmations = await confirmedTools(
+      {
+        runtimeMode: "approval-required",
+        extraReadOnlyTools: " todo , ,lsp_diagnostics,,todo, write,edit,",
+      },
+      ["todo", "lsp_diagnostics", "", "edit", "write", "eval"],
+    );
+    assert.deepEqual(confirmations, ["Allow ?", "Allow edit?", "Allow write?", "Allow eval?"]);
+  });
+
+  it.each([undefined, "", " , ,", "not_a_tool"])(
+    "keeps the default read-only set when the extra list is %j",
+    async (extraReadOnlyTools) => {
+      const confirmations = await confirmedTools(
+        { runtimeMode: "approval-required", extraReadOnlyTools },
+        ["read", "grep", "find", "ls", "todo", "write"],
+      );
+      assert.deepEqual(confirmations, ["Allow todo?", "Allow write?"]);
     },
   );
 

@@ -8,6 +8,7 @@ import {
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
+import { T3_PI_EXTRA_READ_ONLY_TOOLS_ENV } from "./readOnlyTools.ts";
 
 const threadId = ThreadId.make("thread-pi-t3-mcp");
 
@@ -85,6 +86,18 @@ describe("pi T3 MCP injection", () => {
       permissionOnly.env[T3_PI_MCP_EXTENSION_PATH_ENV],
       "/tmp/cache/pi-t3-mcp-extension.ts",
     );
+  });
+
+  it("passes provider instance variables such as extra read-only tools through to Pi", () => {
+    const launch = buildPiRpcLaunch({
+      launchArgs: [],
+      environment: { PATH: "/usr/bin", [T3_PI_EXTRA_READ_ONLY_TOOLS_ENV]: "todo,lsp_diagnostics" },
+      mcpSession,
+      extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      runtimeMode: "approval-required",
+    });
+    assert.equal(launch.env[T3_PI_EXTRA_READ_ONLY_TOOLS_ENV], "todo,lsp_diagnostics");
+    assert.equal(launch.env.PATH, "/usr/bin");
   });
 
   it("forces tools and user extensions off for unattended text generation", () => {
